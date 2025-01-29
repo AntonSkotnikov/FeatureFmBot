@@ -74,8 +74,8 @@ def start(message):
 def help(message):
     string = (
         "/<help | info | h> - display this message\n"
-        "/parse - scrape isrc range and parse info\n"
-        "/json - scrape isrc range and return jsons"
+        "/parse - scrape ISRC range and parse info\n"
+        "/json - scrape ISRC range and return jsons"
     )
     bot.send_message(message.chat.id, string)
 
@@ -156,7 +156,7 @@ def scrape(chat_id, query):
             resps = gr.map(reqs, exception_handler=exception_handler)
 
             #fails = list(map(lambda x: isinstance(x, str), resps))
-            #print(f"{time.strftime('[%X]')} From {len(resps)} resps {fails.count(True)} are failed.")
+            #print(f"{time.strftime('[%X]')} From {len(resps)} resps {fails.count(True)} were failed.")
             log(f"Got {step_end} / {iter_amount} resps.")
             
             step_miss = send_messages(chat_id, resps, raw)  # Send messages and return amount of missed reqs
@@ -226,34 +226,51 @@ def send_messages(chat_id, resps, raw=False) -> int:
             #bot.send_message(message.chat.id, f"По {isrc} получен ответ, но записи не существует.")
             continue  # No track found with such ISRC, skipping it
         
-        # Parsing json here
+        # Query asked for raw json
+        if raw:
+            message = str(json)
+            buf.append(message)
         
-        data = None
+        # Parsing json here
+        else:
+            data = {
+                "isrc": None,
+                "artists": None,
+                "title": None,
+                "imageUrl": None,
+                "duration": None,
+            }
+            empty_fields = 5
 
-        if not raw:
-            for platform in json:
-                if (platform["id"] != "anghami" and
-                    all(map(lambda key: key in platform, ("isrc", "artists", "title", "imageUrl", "duration")))):
+            platforms = list(json.keys())
+            if "anghami" in platforms:
+                platforms.remove("anghami")
+                platforms.insert(-1, "anghami")
+            if "boomplay" in platforms:
+                platforms.remove("boomplay")
+                platforms.insert(0, "boomplay")
 
-                    data = [
-                        platform["isrc"],
-                        ", ".join(platform["artists"]) if platform["artists"] is not None else "None",
-                        platform["title"],
-                        platform["imageUrl"],
-                        time.strftime("%M:%S", time.gmtime(platform["duration"]))
-                    ]
-            
-                    template = "isrc: {},\nartist(s): {},\ntitle: {},\ncover: {},\nduration: {}."
-                    message = template.format(*data)
-                    buf.append(message)
+            for platform in platforms:
+                pl = json[platform]
 
+                for key in data.keys():
+                    if data[key] is None and key in pl:
+                        data[key] = pl[key]
+                        empty_fields -= 1
+
+                        if empty_fields == 0:
+                            break
+                
+                if empty_fields == 0:
                     break
 
-        if data is None:
-            # Query asked for raw json or
-            # couldn't get all fields from any single platform, so printing raw json
-            
-            message = str(json)
+            message = (
+                f"ISRC: {data['isrc']},\n"
+                f"artist(s): {', '.join(data['artists']) if data['artists'] is not None else None},\n"
+                f"title: {data['title']},\n"
+                f"cover: {data['imageUrl']},\n"
+                f"duration: {time.strftime('%M:%S', time.gmtime(data['duration']))}."
+            )
             buf.append(message)
     
     buf.flush()
@@ -262,4 +279,3 @@ def send_messages(chat_id, resps, raw=False) -> int:
 
 if __name__ == "__main__":
     bot.infinity_polling()
-
