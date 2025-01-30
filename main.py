@@ -242,17 +242,18 @@ def send_messages(chat_id, resps, raw=False) -> int:
             }
             empty_fields = 5
 
-            platforms = list(json.keys())
-            if "anghami" in platforms:
-                platforms.remove("anghami")
-                platforms.insert(-1, "anghami")
-            if "boomplay" in platforms:
-                platforms.remove("boomplay")
-                platforms.insert(0, "boomplay")
+            platforms = list(json)
+            platforms_amount = len(platforms)
 
-            for platform in platforms:
-                pl = json[platform]
+            for i in range(platforms_amount):
+                pl_id = platforms[i]['id']
 
+                if pl_id == "anghami":
+                    platforms.insert(platforms_amount, platforms.pop(i))
+                elif pl_id == "boomplay":
+                    platforms.insert(0, platforms.pop(i))
+
+            for pl in platforms:
                 for key in data.keys():
                     if data[key] is None and key in pl:
                         data[key] = pl[key]
