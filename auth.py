@@ -1,11 +1,12 @@
 import requests as r
 from datetime import datetime
+from os import getenv
 
 
-BOT_TOKEN = "TOKENTOKENTOKENTOKENTOKENTOKENTOKEN"
+BOT_TOKEN = getenv("BOT_TOKEN")
 __auth_data = {
-    "username": "example@example.org", 
-    "password": "example"
+    "username": getenv("USERNAME"),
+    "password": getenv("PASSWORD")
  }
 
 AUTH_URL = "https://console-api.feature.fm/login"

@@ -242,7 +242,7 @@ def send_messages(chat_id, resps, raw=False) -> int:
             }
             empty_fields = 5
 
-            platforms = list(json)
+            platforms = json
             platforms_amount = len(platforms)
 
             for i in range(platforms_amount):
