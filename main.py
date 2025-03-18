@@ -15,8 +15,10 @@ MESSAGE_MAX_LENGTH = 4096
 ITER_STEP = 100  # amount of requests to send at once
 
 bot = telebot.TeleBot(BOT_TOKEN)
-kb = ReplyKeyboardMarkup(resize_keyboard=True)
-kb.row("/parse", "/json")
+kb_default = ReplyKeyboardMarkup(resize_keyboard=True)
+kb_default.row("/parse", "/json")
+kb_cancel = ReplyKeyboardMarkup(resize_keyboard=True)
+kb_cancel.add("/cancel")
 
 jar = auth()  # Get cookie jar
  
@@ -26,7 +28,6 @@ def log(*args):
  
 
 def split_isrc(isrc):
-    
     if len(isrc) != 12:
         raise ValueError("Invalid ISRC length.")
 
@@ -68,7 +69,7 @@ def start(message):
             "Feel free to call /parse to start\n"
             "(more at /help)"
     )
-    bot.send_message(message.chat.id, string, reply_markup=kb)
+    bot.send_message(message.chat.id, string, reply_markup=kb_default)
 
 
 @bot.message_handler(commands=['help', 'info', 'h'])
@@ -84,14 +85,18 @@ def help(message):
 @bot.message_handler(commands=['parse', 'json'])
 def greet(message):
     query = dict()
-    query["raw"] = message.text.startswith("/json")  # TODO: refactor
+    query["raw"] = message.text.startswith("/json")
 
-    bot.send_message(message.chat.id, f"Привет! Введи начальный ISRC")
+    string = f"Привет! Введи начальный ISRC"
+    bot.send_message(message.chat.id, string, reply_markup=kb_cancel)
     bot.register_next_step_handler(message, input_isrc, query)
 
 
 def input_isrc(message, query):
     try:
+        if message.text.startswith("/cancel"):
+            raise RuntimeError
+
         isrc = split_isrc(message.text.upper())
         query["isrc"] = isrc
 
@@ -101,10 +106,16 @@ def input_isrc(message, query):
     except ValueError:
         bot.send_message(message.chat.id, "Неверный формат ISRC. Введи его еще раз")
         bot.register_next_step_handler(message, input_isrc, query)
-
+    
+    except RuntimeError:
+        string = "Scraping was cancelled"
+        bot.send_message(message.chat.id, string, reply_markup=kb_default)
 
 def input_iter_amount(message, query):
     try:
+        if message.text.startswith("/cancel"):
+            raise RuntimeError
+
         isrc = query["isrc"]
         iter_amount = int(message.text)  # total amount of ISRCs to parse
         log(query, iter_amount)
@@ -153,8 +164,6 @@ def scrape(chat_id, query):
             resps = gr.map(reqs, exception_handler=exception_handler, size=ITER_STEP)
             del reqs  # github.com/spyoungtech/grequests/issues/137
 
-            #fails = list(map(lambda x: isinstance(x, str), resps))
-            #print(f"{time.strftime('[%X]')} From {len(resps)} resps {fails.count(True)} were failed.")
             log(f"Got {step_end} / {iter_amount} resps.")
             
             try:
@@ -164,13 +173,14 @@ def scrape(chat_id, query):
                 # send_messages may raise ReadTimeout, so del is wrapped in try/finally to prevent FD leaks
                 del resps
         
-        if miss_amount:
-            if miss_amount != iter_amount:
-                template = "По {} другим ISRC треков не найдено."
-            else:
-                template = "По всем {} ISRC треков не найдено."
-
-            bot.send_message(chat_id, template.format(miss_amount))
+        if miss_amount == 0:
+            template = "По всем ISRC были найдены треки."
+        elif miss_amount == iter_amount:
+            template = "По всем {} ISRC треков не найдено."
+        else:
+            template = "По {} другим ISRC треков не найдено."
+        
+        bot.send_message(chat_id, template.format(miss_amount), reply_markup=kb_default)
 
 
 class MessageBuf:
@@ -215,18 +225,16 @@ def send_messages(chat_id, resps, raw=False) -> int:
 
     for resp in resps:
         if isinstance(resp, str):
-            # resp is swapped to isrc of failed reqv by excpetion handler
+            # resp is replaced with ISRC of failed request by excpetion handler
             buf.flush()
             bot.send_message(chat_id, f"По {resp} не получено ответа после 4 попыток.")
             continue
         
-        json = resp.json()
-
-        if "name" in json:
-            #isrc = resp.url.split("3A")[-1]  # split by ":" and take ISRC that goes after it
+        if resp.status_code == 404:
             step_miss += 1
-            #bot.send_message(message.chat.id, f"По {isrc} получен ответ, но записи не существует.")
             continue  # No track found with such ISRC, skipping it
+        
+        json = resp.json()
         
         # Query asked for raw json
         if raw:
@@ -282,4 +290,3 @@ def send_messages(chat_id, resps, raw=False) -> int:
 
 if __name__ == "__main__":
     bot.infinity_polling(allowed_updates=["message"])
-
