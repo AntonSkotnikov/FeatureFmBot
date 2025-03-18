@@ -12,6 +12,7 @@ from cc import CC_ALPHA_2
 
 RESOLVER_URL = "https://console-api.feature.fm/smartlink-resolver"
 MESSAGE_MAX_LENGTH = 4096
+ITER_STEP = 100  # amount of requests to send at once
 
 bot = telebot.TeleBot(BOT_TOKEN)
 kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -132,35 +133,36 @@ def scrape(chat_id, query):
     with gr.Session() as s:
         s.cookies = jar  # Global jar
         retries = Retry(total=3, backoff_factor=0.05)
-        s.mount("https://", HTTPAdapter(max_retries=retries))
+        s.mount("https://", HTTPAdapter(max_retries=retries, pool_maxsize=ITER_STEP))
 
         miss_amount = 0  # amount of "Not found" replies
-        iter_step = 100  # amount of requests to send at once
 
-        for step_start in range(0, iter_amount, iter_step):
-            step_end = min(step_start + iter_step, iter_amount)
-            reqs = []
+        for step_start in range(0, iter_amount, ITER_STEP):
+            step_end = min(step_start + ITER_STEP, iter_amount)
+            
+            reqs = (gr.get(
+                        RESOLVER_URL, 
+                        params={
+                           "q": f"isrc:{prefix}{code+cur_offset :05}",
+                           "op": "skipscrape"
+                        },
+                        session=s
+                    ) 
+                        for cur_offset in range(step_start, step_end))
 
-            for cur_offset in range(step_start, step_end):
-                req = gr.get(
-                    RESOLVER_URL,
-                    params={
-                        "q": f"isrc:{prefix}{code+cur_offset :05}",
-                        "op": "skipscrape"
-                    },
-                    session=s
-                )
-
-                reqs.append(req)
-
-            resps = gr.map(reqs, exception_handler=exception_handler)
+            resps = gr.map(reqs, exception_handler=exception_handler, size=ITER_STEP)
+            del reqs  # github.com/spyoungtech/grequests/issues/137
 
             #fails = list(map(lambda x: isinstance(x, str), resps))
             #print(f"{time.strftime('[%X]')} From {len(resps)} resps {fails.count(True)} were failed.")
             log(f"Got {step_end} / {iter_amount} resps.")
             
-            step_miss = send_messages(chat_id, resps, raw)  # Send messages and return amount of missed reqs
-            miss_amount += step_miss
+            try:
+                step_miss = send_messages(chat_id, resps, raw)  # Send messages and return amount of missed reqs
+                miss_amount += step_miss
+            finally:
+                # send_messages may raise ReadTimeout, so del is wrapped in try/finally to prevent FD leaks
+                del resps
         
         if miss_amount:
             if miss_amount != iter_amount:
@@ -279,4 +281,5 @@ def send_messages(chat_id, resps, raw=False) -> int:
 
 
 if __name__ == "__main__":
-    bot.infinity_polling()
+    bot.infinity_polling(allowed_updates=["message"])
+
